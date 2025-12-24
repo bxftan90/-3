@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { ParticleData, TreeState } from '../types';
@@ -12,15 +12,15 @@ interface PhotoParticlesProps {
 export const PhotoParticles: React.FC<PhotoParticlesProps> = ({ particles, treeState }) => {
   const groupRef = useRef<THREE.Group>(null);
   
-  // Memoize indices once, as we now pre-allocate and types don't change
-  const photoIndices = React.useMemo(() => {
+  // Indices of particles that are allocated for photos
+  const photoIndices = useMemo(() => {
     return particles.current
       .map((p, i) => (p.type === 'photo' ? i : -1))
       .filter(i => i !== -1);
   }, [particles]);
 
-  // Luxury Frame Material
-  const frameMaterial = React.useMemo(() => new THREE.MeshStandardMaterial({
+  // Luxury Frame Material (Golden)
+  const frameMaterial = useMemo(() => new THREE.MeshStandardMaterial({
       color: COLORS.GOLD_METALLIC,
       roughness: 0.1,
       metalness: 0.95,
@@ -30,57 +30,85 @@ export const PhotoParticles: React.FC<PhotoParticlesProps> = ({ particles, treeS
   useFrame((state) => {
     if (!groupRef.current) return;
     
-    let activeIndex = 0;
-    
+    // Determine the "Active" photo to show in PHOTO_VIEW (Show the last added one)
+    let lastActiveIndex = -1;
+    photoIndices.forEach((idx, i) => {
+        if (particles.current[idx].active) lastActiveIndex = i;
+    });
+
     photoIndices.forEach((idx, i) => {
         const child = groupRef.current!.children[i];
         if (!child) return;
 
         const p = particles.current[idx];
         
-        // Update Transform
-        child.position.copy(p.currentPos);
-        child.rotation.copy(p.currentRotation);
-        
-        // Hide inactive particles completely
+        // 1. HIDDEN STATE (Inactive)
         if (!p.active) {
-            child.scale.set(0, 0, 0);
+            child.scale.setScalar(0);
             return;
         }
 
-        // INTERACTIVE STATE: PHOTO_VIEW
-        if (treeState === TreeState.PHOTO_VIEW) { 
-           // Calculate which active photo this is
-           // NOTE: logic here must match TreeSystem loop to sync with physics logic if needed
-           // For simplicity, we just use local counter.
-           if (activeIndex === 0) { // First active photo logic handled by physics? 
-               // Wait, logic should match specific active index. 
-               // TreeSystem moves the correct one to center. We just follow physics here.
-               // But we do scale effect here.
+        // 2. TREE SHAPE (ASSEMBLED) - FORCE HELIX POSITION
+        // We ignore particle physics here to ensure frames "stick" to the tree
+        if (treeState === TreeState.TREE_SHAPE) {
+            const height = 14;
+            // Distribute active photos along a spiral
+            const t = i / Math.max(photoIndices.length, 1);
+            
+            // Calculate Spiral Position
+            const startY = height * 0.45; // Start near top
+            const spacingY = 0.8; 
+            // Absolute positioning based on index to keep them stable
+            const y = startY - (i * spacingY); 
+            
+            // Radius tapers with height (Cone shape)
+            const treeRadiusAtY = 5.0 * (1 - (y + height * 0.4) / height);
+            const r = Math.max(treeRadiusAtY + 1.2, 1.5); // Offset from tree surface
+            
+            const angle = i * 0.8; // Rotate around tree
+            
+            const targetX = Math.cos(angle) * r;
+            const targetZ = Math.sin(angle) * r;
+            const targetPos = new THREE.Vector3(targetX, y, targetZ);
+
+            // Smoothly move to slot
+            child.position.lerp(targetPos, 0.1);
+            
+            // Orientation Fix: Look OUTWARD from center
+            // By looking at a point twice as far along the radius, we ensure the front face points out
+            child.lookAt(targetPos.x * 2, targetPos.y, targetPos.z * 2);
+            
+            // Normal Scale
+            child.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+        } 
+        
+        // 3. EXPLODING - USE PHYSICS
+        else if (treeState === TreeState.EXPLODING || treeState === TreeState.REASSEMBLING) {
+            child.position.copy(p.currentPos);
+            child.rotation.copy(p.currentRotation);
+            child.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+        }
+
+        // 4. PHOTO VIEW - FOCUS ON ONE
+        else if (treeState === TreeState.PHOTO_VIEW) {
+           // If this is the latest photo, bring to center
+           if (i === lastActiveIndex) {
+               const camDir = new THREE.Vector3();
+               state.camera.getWorldDirection(camDir);
+               // Position 15 units in front of camera
+               const target = state.camera.position.clone().add(camDir.multiplyScalar(15));
                
-               // To find if THIS particle is the one currently centered, check proximity to camera target?
-               // Or we can rely on p.currentPos being moved by Physics.
-               // We just want scale up.
+               child.position.lerp(target, 0.08);
                
-               // Simpler check: If it's close to camera, scale up?
-               const distToCam = child.position.distanceTo(state.camera.position);
-               if (distToCam < 15) { // Threshold for "Selected"
-                    child.scale.lerp(new THREE.Vector3(3.0, 3.0, 3.0), 0.1);
-                    
-                    const targetQ = new THREE.Quaternion();
-                    const m = new THREE.Matrix4().lookAt(child.position, state.camera.position, new THREE.Vector3(0,1,0));
-                    targetQ.setFromRotationMatrix(m);
-                    child.quaternion.slerp(targetQ, 0.1);
-               } else {
-                    child.scale.lerp(new THREE.Vector3(p.scale, p.scale, p.scale), 0.1);
-               }
+               // Orientation Fix: Face the CAMERA directly
+               child.lookAt(state.camera.position);
+               
+               // Scale UP
+               child.scale.lerp(new THREE.Vector3(3.5, 3.5, 3.5), 0.08);
            } else {
-               child.scale.lerp(new THREE.Vector3(p.scale, p.scale, p.scale), 0.1);
+               // Push others away/hide slightly
+               child.scale.lerp(new THREE.Vector3(0, 0, 0), 0.1);
            }
-           activeIndex++;
-        } else {
-           // Normal State
-           child.scale.lerp(new THREE.Vector3(p.scale, p.scale, p.scale), 0.1);
         }
     });
   });
@@ -89,24 +117,27 @@ export const PhotoParticles: React.FC<PhotoParticlesProps> = ({ particles, treeS
     <group ref={groupRef}>
       {photoIndices.map((idx, i) => {
         const p = particles.current[idx];
-        // Note: p.texture might be undefined initially or updated via ref mutation.
-        // We rely on parent re-rendering to update the Texture prop here if active changes.
+        
+        // Ensure color space is correct to prevent washed out/white textures
+        if (p.texture) {
+            p.texture.colorSpace = THREE.SRGBColorSpace;
+        }
+
         return (
-          <group key={p.id || idx}>
+          <group key={`photo-frame-${i}`}>
             {/* Main Frame Structure */}
             <mesh castShadow receiveShadow material={frameMaterial}>
                 <boxGeometry args={[1.2, 1.5, 0.05]} /> 
             </mesh>
             
-            {/* The Photo Texture Plane - Only render mesh if active/texture exists to save draw calls? 
-                Actually, easier to just hide via scale if inactive. 
-                But updating texture is needed. */}
-            <mesh position={[0, 0, 0.03]}>
+            {/* The Photo Texture Plane */}
+            {/* Fix: Use standard white color and REMOVE toneMapped={false} to avoid overexposure */}
+            <mesh position={[0, 0, 0.035]}>
                 <planeGeometry args={[1, 1.25]} /> 
                 {p.texture ? (
-                     <meshBasicMaterial map={p.texture} />
+                     <meshBasicMaterial map={p.texture} color="#ffffff" side={THREE.DoubleSide} />
                 ) : (
-                     <meshBasicMaterial color="black" />
+                     <meshBasicMaterial color="#111" />
                 )}
             </mesh>
 

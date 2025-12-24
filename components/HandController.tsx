@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import { TreeState } from '../types';
-import { detectGesture, GestureType } from '../utils/gesture';
 
 interface HandControllerProps {
   setTreeState: (s: TreeState) => void;
@@ -14,21 +13,18 @@ export const HandController: React.FC<HandControllerProps> = ({ setTreeState, tr
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
   
-  // -- STABILITY FIX: Use Refs to track state inside the loop without triggering re-renders --
+  // Refs to avoid dependency loops in animation loop
   const stateRef = useRef({ treeState, setTreeState, onCameraRotate, onGrabPhoto });
-  
-  // Update refs whenever props change
   useEffect(() => {
     stateRef.current = { treeState, setTreeState, onCameraRotate, onGrabPhoto };
   }, [treeState, setTreeState, onCameraRotate, onGrabPhoto]);
 
-  // Throttling and logic refs
-  const lastGesture = useRef<GestureType>("NONE");
-  const gestureHistory = useRef<GestureType[]>([]);
   const lastHandX = useRef<number | null>(null);
   const lastPredictionTime = useRef<number>(0);
   const animationFrameId = useRef<number>(0);
-  const PREDICTION_INTERVAL = 100; // 10 FPS for detection is sufficient
+  
+  // Cooldown to prevent state flickering
+  const cooldownRef = useRef<number>(0);
 
   useEffect(() => {
     const videoElement = document.getElementById('webcam') as HTMLVideoElement;
@@ -36,7 +32,7 @@ export const HandController: React.FC<HandControllerProps> = ({ setTreeState, tr
 
     const setupMediaPipe = async () => {
       try {
-        if (handLandmarkerRef.current) return; // Already initialized
+        if (handLandmarkerRef.current) return;
 
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
@@ -70,23 +66,76 @@ export const HandController: React.FC<HandControllerProps> = ({ setTreeState, tr
     const predictWebcam = () => {
       const now = performance.now();
       
-      if (videoElement && handLandmarkerRef.current && (now - lastPredictionTime.current > PREDICTION_INTERVAL)) {
+      // Limit prediction to ~15 FPS to save performance
+      if (videoElement && handLandmarkerRef.current && (now - lastPredictionTime.current > 60)) {
         lastPredictionTime.current = now;
         
         const results = handLandmarkerRef.current.detectForVideo(videoElement, now);
 
         if (results.landmarks && results.landmarks.length > 0) {
             const landmarks = results.landmarks[0];
-            const gesture = detectGesture(landmarks);
-            const handX = landmarks[9].x; 
+            const { treeState, setTreeState, onCameraRotate } = stateRef.current;
+            
+            // --- RAW GESTURE DETECTION ---
+            
+            // 1. PINCH / OK DETECTION
+            // Distance between Thumb Tip (4) and Index Tip (8)
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const pinchDist = Math.sqrt(
+                Math.pow(thumbTip.x - indexTip.x, 2) +
+                Math.pow(thumbTip.y - indexTip.y, 2) +
+                Math.pow(thumbTip.z - indexTip.z, 2)
+            );
 
-            // Smooth gesture history (Stabilizer)
-            gestureHistory.current.push(gesture);
-            if (gestureHistory.current.length > 4) gestureHistory.current.shift();
+            // 2. FIST DETECTION
+            // Check if fingertips are below knuckles (simple heuristic for fist held up)
+            // Note: Coordinates are normalized. 0,0 is top-left.
+            const isFist = (
+                landmarks[8].y > landmarks[6].y && // Index tip below pip
+                landmarks[12].y > landmarks[10].y && // Middle tip below pip
+                landmarks[16].y > landmarks[14].y    // Ring tip below pip
+            );
+
+            // 3. OPEN HAND (Not fist, fingers spread)
+            const isOpen = !isFist && pinchDist > 0.1;
+
+            // --- INTERACTION LOGIC ---
+
+            if (now > cooldownRef.current) {
+                if (pinchDist < 0.05) {
+                    // *** OK GESTURE DETECTED ***
+                    console.log("OK GESTURE -> PHOTO VIEW");
+                    if (treeState !== TreeState.PHOTO_VIEW) {
+                        setTreeState(TreeState.PHOTO_VIEW);
+                        cooldownRef.current = now + 1000; // 1s cooldown
+                    }
+                } else if (isFist) {
+                    // *** FIST -> ASSEMBLE ***
+                    if (treeState !== TreeState.TREE_SHAPE) {
+                        setTreeState(TreeState.TREE_SHAPE);
+                        cooldownRef.current = now + 1000;
+                    }
+                } else if (isOpen) {
+                    // *** OPEN -> EXPLODE ***
+                    if (treeState === TreeState.TREE_SHAPE) {
+                        setTreeState(TreeState.EXPLODING);
+                        cooldownRef.current = now + 1000;
+                    }
+                }
+            }
+
+            // --- ROTATION CONTROL ---
+            // Only rotate if hand is moving horizontally
+            const handX = landmarks[9].x;
+            if (lastHandX.current !== null) {
+                const delta = handX - lastHandX.current;
+                if (Math.abs(delta) > 0.01) { // Threshold
+                    onCameraRotate(delta * -3.0); // Sensitive rotation
+                }
+            }
+            lastHandX.current = handX;
             
-            const stableGesture = getDominantGesture(gestureHistory.current);
-            
-            handleInteraction(stableGesture, handX);
         } else {
             lastHandX.current = null;
         }
@@ -95,61 +144,12 @@ export const HandController: React.FC<HandControllerProps> = ({ setTreeState, tr
       animationFrameId.current = requestAnimationFrame(predictWebcam);
     };
 
-    const getDominantGesture = (history: GestureType[]): GestureType => {
-      if (history.length === 0) return "NONE";
-      const counts: Record<string, number> = {};
-      history.forEach(g => counts[g] = (counts[g] || 0) + 1);
-      return Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b) as GestureType;
-    };
-
-    const handleInteraction = (gesture: GestureType, currentHandX: number) => {
-        const { treeState, setTreeState, onCameraRotate, onGrabPhoto } = stateRef.current;
-        
-        // 1. ROTATION (Only in Exploding state + Hand Moving)
-        if (treeState === TreeState.EXPLODING && lastHandX.current !== null) {
-            const delta = currentHandX - lastHandX.current;
-            if (Math.abs(delta) > 0.015) {
-                onCameraRotate(delta * -2.5); 
-            }
-        }
-        lastHandX.current = currentHandX;
-
-        // 2. STATE SWITCHING
-        const isNewGesture = gesture !== lastGesture.current;
-        lastGesture.current = gesture;
-
-        if (gesture === "FIST") {
-            // Fist -> Assemble
-            if (isNewGesture && treeState !== TreeState.TREE_SHAPE) setTreeState(TreeState.TREE_SHAPE);
-        }
-        else if (gesture === "OPEN_PALM") {
-            // Open -> Scatter
-            if (isNewGesture && treeState !== TreeState.EXPLODING) setTreeState(TreeState.EXPLODING);
-        }
-        else if (gesture === "PINCH") {
-            // OK/Pinch -> Photo View
-            if (isNewGesture) {
-                if (treeState !== TreeState.PHOTO_VIEW) {
-                    setTreeState(TreeState.PHOTO_VIEW);
-                } else {
-                    onGrabPhoto(); // Cycle photos if already in view
-                }
-            }
-        }
-    };
-
     setupMediaPipe();
 
-    // Cleanup function
     return () => {
       if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
-      // We do NOT stop the stream or close the landmarker here to avoid 
-      // black screen flickering if the component briefly unmounts/remounts,
-      // though in this app structure HandController is likely stable.
-      // Ideally, we close resources if the app is truly closing.
-      // For now, let's keep the stream alive for smoother UX.
     };
-  }, []); // Empty dependency array = Initialize ONCE.
+  }, []);
 
   return null;
 };
