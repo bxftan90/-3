@@ -6,7 +6,6 @@ import { COLORS } from '../constants';
 
 export const StarTopper: React.FC<{ treeState: TreeState }> = ({ treeState }) => {
   const ref = useRef<THREE.Group>(null);
-  const glowRef = useRef<THREE.Mesh>(null);
   
   // Create 5-point star geometry
   const starGeometry = useMemo(() => {
@@ -17,7 +16,6 @@ export const StarTopper: React.FC<{ treeState: TreeState }> = ({ treeState }) =>
     
     for (let i = 0; i < points * 2; i++) {
       const r = (i % 2 === 0) ? outerRadius : innerRadius;
-      // Rotate by -PI/2 to point upwards
       const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
       const x = Math.cos(a) * r;
       const y = Math.sin(a) * r;
@@ -35,8 +33,39 @@ export const StarTopper: React.FC<{ treeState: TreeState }> = ({ treeState }) =>
     });
   }, []);
 
+  // Soft Glow Shader Material
+  const glowMaterial = useMemo(() => new THREE.ShaderMaterial({
+    uniforms: {
+        uColor: { value: new THREE.Color(COLORS.WARM_WHITE) }
+    },
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    `,
+    fragmentShader: `
+        uniform vec3 uColor;
+        varying vec2 vUv;
+        void main() {
+            // Distance from center (0.5, 0.5)
+            float d = distance(vUv, vec2(0.5));
+            // Soft exponential falloff
+            float alpha = 1.0 - smoothstep(0.0, 0.5, d);
+            alpha = pow(alpha, 2.5); // Make it softer core
+            
+            gl_FragColor = vec4(uColor, alpha * 0.6); // 0.6 max opacity
+        }
+    `
+  }), []);
+
   useFrame((state) => {
-    if (!ref.current || !glowRef.current) return;
+    if (!ref.current) return;
     
     // Spin logic
     ref.current.rotation.y = state.clock.elapsedTime * 0.5;
@@ -66,16 +95,10 @@ export const StarTopper: React.FC<{ treeState: TreeState }> = ({ treeState }) =>
         />
       </mesh>
       
-      {/* Glow Halo */}
-      <mesh ref={glowRef}>
-        <sphereGeometry args={[1.5, 16, 16]} />
-        <meshBasicMaterial 
-            color={COLORS.WARM_WHITE} 
-            transparent 
-            opacity={0.3} 
-            depthWrite={false}
-            side={THREE.BackSide}
-        />
+      {/* Soft Glow Billboard */}
+      <mesh scale={[5, 5, 1]} position={[0,0,0]}>
+        <planeGeometry args={[1, 1]} />
+        <primitive object={glowMaterial} attach="material" />
       </mesh>
       
       {/* Point Light for surrounding illumination */}

@@ -117,31 +117,21 @@ export const OrnamentLayer: React.FC<{ particles: React.MutableRefObject<Particl
   // Geometries
   const ballGeo = useMemo(() => new THREE.SphereGeometry(1, 32, 32), []);
   const lightGeo = useMemo(() => new THREE.SphereGeometry(0.5, 16, 16), []);
-  const caneGeo = useMemo(() => new THREE.CylinderGeometry(0.1, 0.1, 2, 8), []);
-
+  
   // Gift Geometry (Box)
   const boxGeo = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
   
   // Gift Ribbon Geometry (Merged Cross)
   const ribbonGeo = useMemo(() => {
-    // Vertical wrap
     const g1 = new THREE.BoxGeometry(1.02, 1.02, 0.2); 
-    // Horizontal wrap
     const g2 = new THREE.BoxGeometry(0.2, 1.02, 1.02);
     const geo = BufferGeometryUtils.mergeGeometries([g1, g2]);
     return geo;
   }, []);
 
-  // Materials
+  // --- Materials ---
   const metallicMat = useMemo(() => new THREE.MeshStandardMaterial({
     color: COLORS.GOLD_METALLIC,
-    roughness: 0.1,
-    metalness: 0.9,
-    envMapIntensity: 1.5
-  }), []);
-
-  const silverMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: COLORS.SILVER_METALLIC,
     roughness: 0.1,
     metalness: 0.9,
     envMapIntensity: 1.5
@@ -164,25 +154,13 @@ export const OrnamentLayer: React.FC<{ particles: React.MutableRefObject<Particl
     toneMapped: false 
   }), []);
 
-  const caneMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.4
-  }), []);
-
   return (
     <group>
-      {/* Balls: Mix of Gold and Silver (Handled inside via color logic) */}
       <InstancedGroup particles={particles} type="ornament_ball" geometry={ballGeo} material={metallicMat} />
-      
-      {/* Gifts: Render Box then Render Ribbon */}
       <InstancedGroup particles={particles} type="ornament_gift" geometry={boxGeo} material={giftBoxMat} />
       <InstancedGroup particles={particles} type="ornament_gift" geometry={ribbonGeo} material={giftRibbonMat} isRibbon={true} />
-      
-      {/* Lights: Twinkling */}
       <InstancedGroup particles={particles} type="light" geometry={lightGeo} material={lightMat} />
-      
-      {/* Canes */}
-      <InstancedGroup particles={particles} type="cane" geometry={caneGeo} material={caneMat} />
+      {/* Cane REMOVED */}
     </group>
   );
 };

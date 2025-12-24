@@ -3,19 +3,17 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 
 export const SnowBackground: React.FC = () => {
-  const count = 600; // Increased snow count for romantic atmosphere
+  const count = 2500; // Increased count significantly
   const mesh = useRef<THREE.InstancedMesh>(null);
-  
-  // Create dummy object for positioning
   const dummy = React.useMemo(() => new THREE.Object3D(), []);
   
-  // Store velocities
   const particles = React.useMemo(() => {
     const temp = [];
     for (let i = 0; i < count; i++) {
       const t = Math.random() * 100;
       const factor = 20 + Math.random() * 100;
-      const speed = 0.005 + Math.random() / 500; // Slower speed
+      // Increased base speed
+      const speed = 0.01 + Math.random() / 200; 
       const xFactor = -50 + Math.random() * 100;
       const yFactor = -50 + Math.random() * 100;
       const zFactor = -50 + Math.random() * 100;
@@ -24,32 +22,44 @@ export const SnowBackground: React.FC = () => {
     return temp;
   }, [count]);
 
-  useFrame((state, delta) => {
+  useFrame((state) => {
     if (!mesh.current) return;
     
+    const time = state.clock.elapsedTime;
+    // Faster wind
+    const windForce = Math.sin(time * 0.5) * 0.08 + 0.04; 
+
     particles.forEach((data, i) => {
       let { factor, speed, xFactor, yFactor, zFactor } = data;
-      // Update time
-      data.t += speed;
       
+      data.t += speed;
       const t = data.t;
 
-      // Calculate position with gentle sway
+      const sway = Math.cos(t * factor * 0.05); 
+      const windDrift = windForce * (time * 15); 
+
+      // Fall faster
+      let y = yFactor - (time * speed * 400) % 100; 
+      if (y < -50) y += 100; 
+
+      let xPos = xFactor + Math.sin(t) + (time * 4); 
+      if (xPos > 50) { 
+         data.xFactor -= 100; 
+         xPos -= 100; 
+      }
+
       dummy.position.set(
-        xFactor + Math.cos((t / 10) * factor) + (Math.sin(t * 1) * factor) / 10,
-        yFactor + Math.sin((t / 10) * factor) + (Math.cos(t * 2) * factor) / 10,
-        zFactor + Math.cos((t / 10) * factor) + (Math.sin(t * 3) * factor) / 10
+        xPos,
+        y,
+        zFactor + Math.cos(t)
       );
       
-      // Rotate snow
       dummy.rotation.set(t, t, t);
-      dummy.scale.setScalar(0.2 + Math.random() * 0.2); // Varied size
+      // Large snowflakes
+      dummy.scale.setScalar(0.2 + Math.random() * 0.4); 
       
       dummy.updateMatrix();
       mesh.current!.setMatrixAt(i, dummy.matrix);
-      
-      // Reset if too low
-      if (dummy.position.y < -30) data.yFactor += 60;
     });
     mesh.current.instanceMatrix.needsUpdate = true;
   });
@@ -57,7 +67,7 @@ export const SnowBackground: React.FC = () => {
   return (
     <instancedMesh ref={mesh} args={[undefined, undefined, count]}>
       <dodecahedronGeometry args={[0.2, 0]} />
-      <meshBasicMaterial color="white" transparent opacity={0.4} />
+      <meshBasicMaterial color="white" transparent opacity={0.7} />
     </instancedMesh>
   );
 };

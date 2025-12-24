@@ -20,10 +20,35 @@ export const getRandomPointInCone = (height: number, radius: number): THREE.Vect
 };
 
 /**
- * Generates a point on the surface of the cone (better for ornaments)
+ * Generates a point on the surface of the cone
+ * Biased towards 0 (Top) if simple random is used, creating clustering.
+ * This version assumes simplistic random Y. 
+ * Kept for backward compat if needed, but prefer getUniformSurfacePointInCone.
  */
 export const getPointOnConeSurface = (height: number, radius: number): THREE.Vector3 => {
   const y = Math.random() * height;
+  const rAtHeight = radius * (1 - y / height);
+  const angle = Math.random() * Math.PI * 2;
+  
+  const x = Math.cos(angle) * rAtHeight;
+  const z = Math.sin(angle) * rAtHeight;
+  
+  return new THREE.Vector3(x, y - height * 0.4, z);
+};
+
+/**
+ * Generates a point on the surface of the cone distributed uniformly by area.
+ * Prevents clustering at the top.
+ */
+export const getUniformSurfacePointInCone = (height: number, radius: number): THREE.Vector3 => {
+  // To distribute uniformly on the surface area of a cone:
+  // We sample distance from tip based on PDF f(d) ~ d. 
+  // d = height * sqrt(random) roughly approximates this for the slant height
+  // y from base = height * (1 - sqrt(random))
+  
+  const r = Math.sqrt(Math.random());
+  const y = height * (1 - r); // r=0 -> y=height(tip), r=1 -> y=0(base)
+  
   const rAtHeight = radius * (1 - y / height);
   const angle = Math.random() * Math.PI * 2;
   

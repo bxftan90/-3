@@ -1,5 +1,7 @@
 {
-  "name": "Christmas Tree3",
+  "name": "Arix Signature Christmas Tree",
   "description": "A luxurious, interactive 3D holiday experience featuring a physics-based exploding and reassembling Christmas tree with emerald and gold aesthetics.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "camera"
+  ]
 }

@@ -3,7 +3,8 @@ import * as THREE from 'three';
 export enum TreeState {
   TREE_SHAPE = 'TREE_SHAPE',
   EXPLODING = 'EXPLODING',
-  REASSEMBLING = 'REASSEMBLING'
+  REASSEMBLING = 'REASSEMBLING',
+  PHOTO_VIEW = 'PHOTO_VIEW' // New state for single photo focus
 }
 
 export interface ParticleData {
@@ -18,9 +19,13 @@ export interface ParticleData {
   // Static properties
   scale: number;
   color: THREE.Color;
-  type: 'leaf' | 'ornament_ball' | 'ornament_gift' | 'light' | 'cane';
+  type: 'leaf' | 'ornament_ball' | 'ornament_gift' | 'light' | 'cane' | 'photo';
   mass: number;
   phaseOffset: number; // For breathing animation
+  // Optional for photos
+  texture?: THREE.Texture;
+  aspectRatio?: number;
+  id?: string; // unique ID for selection
 }
 
 export interface TreeConfig {

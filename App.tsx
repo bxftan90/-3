@@ -1,4 +1,4 @@
-import React, { useState, Suspense } from 'react';
+import React, { useState, Suspense, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Experience } from './components/Experience';
 import { UIOverlay } from './components/UIOverlay';
@@ -16,23 +16,47 @@ const Loader = () => (
 
 export default function App() {
   const [treeState, setTreeState] = useState<TreeState>(TreeState.TREE_SHAPE);
+  const [userPhotos, setUserPhotos] = useState<THREE.Texture[]>([]);
+
+  const handlePhotoUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const files = Array.from(e.target.files);
+      const loader = new THREE.TextureLoader();
+      
+      files.forEach(file => {
+        const url = URL.createObjectURL(file as Blob);
+        loader.load(url, (texture) => {
+          texture.colorSpace = THREE.SRGBColorSpace;
+          setUserPhotos(prev => [...prev, texture]);
+        });
+      });
+    }
+  }, []);
 
   return (
     <div className="relative w-full h-screen bg-[#000c05]">
-      <UIOverlay treeState={treeState} setTreeState={setTreeState} />
+      <UIOverlay 
+        treeState={treeState} 
+        setTreeState={setTreeState} 
+        onUpload={handlePhotoUpload} 
+      />
       
       <Suspense fallback={<Loader />}>
         <Canvas
-          dpr={[1, 2]} // Handle high DPI screens
+          dpr={[1, 2]} 
           gl={{ 
-            antialias: false, // Postprocessing handles AA or we use pixel art style, but here false for bloom perf
+            antialias: false,
             toneMapping: THREE.ReinhardToneMapping,
-            toneMappingExposure: 1.5,
+            toneMappingExposure: 2.5, // Increased from 1.8 to 2.5 for much brighter look
             powerPreference: "high-performance"
           }}
           shadows
         >
-          <Experience treeState={treeState} setTreeState={setTreeState} />
+          <Experience 
+            treeState={treeState} 
+            setTreeState={setTreeState} 
+            userPhotos={userPhotos}
+          />
         </Canvas>
       </Suspense>
     </div>

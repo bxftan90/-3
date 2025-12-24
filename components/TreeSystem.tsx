@@ -1,43 +1,55 @@
-import React, { useRef, useMemo, useEffect } from 'react';
+import React, { useRef, useMemo, useState } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
-import { ParticleData, TreeState, TreeConfig } from '../types';
+import { useFrame, useThree } from '@react-three/fiber';
+import { ParticleData, TreeState } from '../types';
 import { COLORS, PHYSICS, TREE_CONFIG } from '../constants';
-import { getRandomPointInCone, getPointOnConeSurface, getRandomVector } from '../utils/math';
+import { getRandomPointInCone, getPointOnConeSurface, getUniformSurfacePointInCone, getRandomVector } from '../utils/math';
 import { Foliage } from './Foliage';
 import { OrnamentLayer } from './InstancedOrnaments';
 import { StarTopper } from './StarTopper';
+import { PhotoParticles } from './PhotoParticles';
 
 interface TreeSystemProps {
   treeState: TreeState;
   setTreeState: (s: TreeState) => void;
+  userPhotos: THREE.Texture[];
 }
 
-export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState }) => {
+export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState, userPhotos }) => {
   const groupRef = useRef<THREE.Group>(null);
-  
-  // ---------------------------------------------
-  // 1. Data Generation (Run once)
-  // ---------------------------------------------
   const particles = useRef<ParticleData[]>([]);
+  // We need to track which photo is "active" for the zoom effect
+  const [activePhotoIndex, setActivePhotoIndex] = useState<number>(0);
+  
+  const { camera } = useThree();
 
+  // ---------------------------------------------
+  // 1. Data Generation (Run once or when photos change)
+  // ---------------------------------------------
   useMemo(() => {
     const p: ParticleData[] = [];
-    const { height, radius, leafCount, ballCount, giftCount, lightCount, caneCount } = TREE_CONFIG;
+    const { height, radius, leafCount, ballCount, giftCount, lightCount } = TREE_CONFIG;
+
+    const MAX_Y = height * 0.55; 
 
     // Helper to add particle
-    const addParticle = (type: ParticleData['type'], target: THREE.Vector3, scale: number, mass: number, color: THREE.Color) => {
+    const addParticle = (type: ParticleData['type'], target: THREE.Vector3, scale: number, mass: number, color: THREE.Color, texture?: THREE.Texture, forcedRotation?: THREE.Euler) => {
+      // Clamp Y to avoid star collision
+      if (target.y > MAX_Y) target.y = MAX_Y - Math.random();
+
       p.push({
         targetPos: target,
         currentPos: target.clone(), // Start assembled
         velocity: new THREE.Vector3(0, 0, 0),
         angularVelocity: new THREE.Vector3(0, 0, 0),
-        currentRotation: new THREE.Euler(Math.random() * Math.PI, Math.random() * Math.PI, 0),
+        currentRotation: forcedRotation ? forcedRotation.clone() : new THREE.Euler(Math.random() * Math.PI, Math.random() * Math.PI, 0),
         scale,
         type,
         mass,
         color,
-        phaseOffset: Math.random() * 10
+        phaseOffset: Math.random() * 10,
+        texture,
+        id: Math.random().toString(36).substr(2, 9)
       });
     };
 
@@ -49,109 +61,128 @@ export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState 
 
     // B. Balls
     for (let i = 0; i < ballCount; i++) {
-      const pos = getPointOnConeSurface(height, radius * 0.9);
+      const pos = getUniformSurfacePointInCone(height, radius * 0.9);
       addParticle('ornament_ball', pos, 0.2 + Math.random() * 0.2, 1.0, COLORS.GOLD_METALLIC);
     }
 
-    // C. Gifts (At the bottom)
+    // C. Gifts
     for (let i = 0; i < giftCount; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const r = Math.random() * radius * 1.2; // Spread around base
+      const r = Math.random() * radius * 1.2;
       const pos = new THREE.Vector3(Math.cos(angle) * r, -height * 0.45, Math.sin(angle) * r);
       addParticle('ornament_gift', pos, 0.6 + Math.random() * 0.4, 2.0, COLORS.RED_RIBBON);
     }
 
     // D. Lights
     for (let i = 0; i < lightCount; i++) {
-      const pos = getPointOnConeSurface(height, radius * 0.95);
+      const pos = getPointOnConeSurface(height, radius * 0.95); 
       addParticle('light', pos, 0.1, 0.05, COLORS.WARM_WHITE);
     }
 
-    // E. Canes
-    for (let i = 0; i < caneCount; i++) {
-      const pos = getPointOnConeSurface(height, radius * 0.85);
-      addParticle('cane', pos, 0.2, 0.5, new THREE.Color(0xffffff));
+    // E. Canes REMOVED per user request
+
+    // F. Photos (Spiral Arrangement)
+    const photoCount = userPhotos.length;
+    if (photoCount > 0) {
+        userPhotos.forEach((tex, i) => {
+            const t = i / Math.max(photoCount - 1, 1);
+            const startY = height * 0.4;
+            const endY = -height * 0.3;
+            const y = startY - t * (startY - endY);
+            const treeRadiusAtY = radius * (1 - (y + height * 0.4) / height);
+            const spiralRadius = treeRadiusAtY + 1.5; 
+            const rotations = 3;
+            const angle = t * Math.PI * 2 * rotations;
+            const x = Math.cos(angle) * spiralRadius;
+            const z = Math.sin(angle) * spiralRadius;
+            const pos = new THREE.Vector3(x, y, z);
+            
+            // Force face outward
+            const rot = new THREE.Euler(0, -angle, 0);
+            
+            addParticle('photo', pos, 1.0, 1.5, COLORS.GOLD_METALLIC, tex, rot);
+        });
     }
 
     particles.current = p;
-  }, []);
+  }, [userPhotos]); 
 
   // ---------------------------------------------
   // 2. Physics Simulation Loop
   // ---------------------------------------------
   useFrame((state, delta) => {
-    // Safety cap for delta to prevent huge jumps on lag
     const dt = Math.min(delta, 0.1); 
+    const time = state.clock.elapsedTime;
+    let currentPhotoIdx = 0;
 
     particles.current.forEach(p => {
       
+      // -- STATE 1: EXPLODING / SCATTER --
       if (treeState === TreeState.EXPLODING) {
-        // --- EXPLOSION PHYSICS ---
-        // If just started exploding (velocity is zero), give impulsive force
-        // We use a small threshold to detect if it's "static"
         if (p.velocity.lengthSq() < 0.01 && p.currentPos.distanceTo(p.targetPos) < 0.1) {
-           // Calculate direction from center (0, y, 0)
            const centerAxis = new THREE.Vector3(0, p.currentPos.y, 0);
            const direction = new THREE.Vector3().subVectors(p.currentPos, centerAxis).normalize();
-           if (direction.lengthSq() === 0) direction.set(1, 0, 0); // Safety
-           
-           // Randomize explosion vector slightly
+           if (direction.lengthSq() === 0) direction.set(1, 0, 0);
            direction.add(getRandomVector(0.5)).normalize();
-           
            const force = PHYSICS.EXPLOSION_FORCE * (Math.random() * 0.5 + 0.5);
            p.velocity.copy(direction.multiplyScalar(force));
-           
-           // Add heavy spin
-           p.angularVelocity.set(
-             Math.random() - 0.5,
-             Math.random() - 0.5,
-             Math.random() - 0.5
-           ).multiplyScalar(10);
+           p.angularVelocity.set(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).multiplyScalar(10);
         }
 
-        // Apply Velocity
         p.currentPos.addScaledVector(p.velocity, dt);
-        
-        // Apply Drag/Damping
         p.velocity.multiplyScalar(PHYSICS.DAMPING);
         p.angularVelocity.multiplyScalar(PHYSICS.ROTATION_DAMPING);
-
-        // Apply Rotation
         p.currentRotation.x += p.angularVelocity.x * dt;
         p.currentRotation.y += p.angularVelocity.y * dt;
         p.currentRotation.z += p.angularVelocity.z * dt;
 
-        // Add subtle floating noise when slow
         if (p.velocity.length() < 0.5) {
-          p.currentPos.y += Math.sin(state.clock.elapsedTime + p.phaseOffset) * PHYSICS.GRAVITY_DRIFT;
+          p.currentPos.y += Math.sin(time + p.phaseOffset) * PHYSICS.GRAVITY_DRIFT;
         }
 
+      // -- STATE 2: REASSEMBLING / TREE SHAPE --
       } else if (treeState === TreeState.TREE_SHAPE || treeState === TreeState.REASSEMBLING) {
-        // --- REASSEMBLY PHYSICS (Spring/Lerp) ---
-        
-        // Interpolate Position
         const dist = p.currentPos.distanceTo(p.targetPos);
-        
         if (dist > 0.01) {
-          // Lerp factor based on mass (lighter moves faster)
           const speed = PHYSICS.REASSEMBLE_SPEED / Math.sqrt(p.mass);
           p.currentPos.lerp(p.targetPos, speed);
           
-          // Reset Velocity/AngularVelocity for clean state next time
           p.velocity.set(0,0,0);
           p.angularVelocity.set(0,0,0);
-          
-          // Reset Rotation to upright (or target rotation if we stored it)
-          // For simplicity, just dampen rotation to 0,0,0 or original random
-          // Here we just let it freeze effectively
         } else {
            p.currentPos.copy(p.targetPos);
+           // Removed cane specific rotation correction
         }
+
+      // -- STATE 3: PHOTO VIEW --
+      } else if (treeState === TreeState.PHOTO_VIEW) {
+         if (p.type === 'photo') {
+             // Logic: Bring the first photo (or active one) to center of screen
+             if (currentPhotoIdx === activePhotoIndex) {
+                 // Calculate position in front of camera
+                 const camDir = new THREE.Vector3();
+                 camera.getWorldDirection(camDir);
+                 const target = camera.position.clone().add(camDir.multiplyScalar(12)); // 12 units in front
+                 
+                 p.currentPos.lerp(target, 0.05);
+                 p.velocity.set(0,0,0);
+             } else {
+                 // Push others away slightly or keep drifting
+                 p.currentPos.y += Math.sin(time + p.phaseOffset) * 0.02;
+             }
+             currentPhotoIdx++;
+         } else {
+             // All other particles drift or scatter slightly
+             if (p.currentPos.length() < 8) {
+                 // Gently push out if too close to center to clear view for photo
+                 p.currentPos.addScaledVector(p.currentPos.clone().normalize(), 0.05);
+             }
+             p.currentPos.y += Math.sin(time + p.phaseOffset) * 0.02;
+         }
       }
     });
 
-    // Rotate the whole group slowly for showcase
-    if (groupRef.current) {
+    if (groupRef.current && treeState === TreeState.TREE_SHAPE) {
       groupRef.current.rotation.y += dt * 0.1;
     }
   });
@@ -160,9 +191,9 @@ export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState 
     <group ref={groupRef} position={[0, -2, 0]}>
       <Foliage particles={particles} treeState={treeState} />
       <OrnamentLayer particles={particles} />
-      {/* Star Topper is attached to the top, we manually place it */}
+      <PhotoParticles particles={particles} treeState={treeState} />
+      
       <group position={[0, TREE_CONFIG.height * 0.6, 0]}> 
-         {/* Slightly adjusted height because coordinate system is centered on group */}
         <StarTopper treeState={treeState} />
       </group>
     </group>

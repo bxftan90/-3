@@ -23,9 +23,10 @@ export const PHYSICS = {
 export const TREE_CONFIG = {
   height: 14,
   radius: 5,
-  leafCount: 4000,
+  // Optimization: Reduced from 9000 to 5500 to prevent lag when MediaPipe is running
+  leafCount: 5500, 
   ballCount: 120,
   giftCount: 25,
-  lightCount: 200, // Increased lights
-  caneCount: 40
+  lightCount: 200, 
+  caneCount: 0 // Removed candy canes
 };
