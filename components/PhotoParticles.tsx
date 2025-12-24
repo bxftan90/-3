@@ -74,9 +74,10 @@ export const PhotoParticles: React.FC<PhotoParticlesProps> = ({ particles, treeS
             // Smoothly move to slot
             child.position.lerp(targetPos, 0.1);
             
-            // Orientation Fix: Look OUTWARD from center
-            // By looking at a point twice as far along the radius, we ensure the front face points out
-            child.lookAt(targetPos.x * 2, targetPos.y, targetPos.z * 2);
+            // --- ORIENTATION FIX: VERTICAL & OUTWARD ---
+            // We look at a point further out (x*2, z*2) but KEEP the Y the same as the object.
+            // This ensures the frame rotates around Y but stays vertically upright.
+            child.lookAt(targetPos.x * 2, child.position.y, targetPos.z * 2);
             
             // Normal Scale
             child.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
@@ -100,7 +101,8 @@ export const PhotoParticles: React.FC<PhotoParticlesProps> = ({ particles, treeS
                
                child.position.lerp(target, 0.08);
                
-               // Orientation Fix: Face the CAMERA directly
+               // --- ORIENTATION FIX: LOOK AT CAMERA ---
+               // This ensures the photo is perfectly perpendicular to the user's view
                child.lookAt(state.camera.position);
                
                // Scale UP
@@ -131,11 +133,16 @@ export const PhotoParticles: React.FC<PhotoParticlesProps> = ({ particles, treeS
             </mesh>
             
             {/* The Photo Texture Plane */}
-            {/* Fix: Use standard white color and REMOVE toneMapped={false} to avoid overexposure */}
+            {/* Fix: toneMapped={false} ensures true colors. color="white" ensures base tint is neutral. */}
             <mesh position={[0, 0, 0.035]}>
                 <planeGeometry args={[1, 1.25]} /> 
                 {p.texture ? (
-                     <meshBasicMaterial map={p.texture} color="#ffffff" side={THREE.DoubleSide} />
+                     <meshBasicMaterial 
+                        map={p.texture} 
+                        color="white" 
+                        toneMapped={false} 
+                        side={THREE.DoubleSide} 
+                     />
                 ) : (
                      <meshBasicMaterial color="#111" />
                 )}
