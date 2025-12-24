@@ -7,9 +7,10 @@ interface HandControllerProps {
   setTreeState: (s: TreeState) => void;
   treeState: TreeState;
   onCameraRotate: (deltaX: number) => void;
+  onGrabPhoto: () => void;
 }
 
-export const HandController: React.FC<HandControllerProps> = ({ setTreeState, treeState, onCameraRotate }) => {
+export const HandController: React.FC<HandControllerProps> = ({ setTreeState, treeState, onCameraRotate, onGrabPhoto }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastGesture = useRef<GestureType>("NONE");
   const gestureHistory = useRef<GestureType[]>([]);
@@ -112,26 +113,30 @@ export const HandController: React.FC<HandControllerProps> = ({ setTreeState, tr
         lastHandX.current = currentHandX;
 
         // 2. STATE SWITCHING
-        // Debounce state changes slightly by checking if gesture changed
-        if (gesture === lastGesture.current) return;
+        // Only trigger action on gesture entry (Edge detection) to avoid spamming
+        const isNewGesture = gesture !== lastGesture.current;
         lastGesture.current = gesture;
 
         // FIST -> ASSEMBLE (Tree Shape)
         if (gesture === "FIST") {
-            setTreeState(TreeState.TREE_SHAPE);
+            if (isNewGesture) setTreeState(TreeState.TREE_SHAPE);
         }
         // OPEN PALM -> SCATTER (Exploding)
         else if (gesture === "OPEN_PALM") {
-            // Only explode if we are assembled or in photo view
-            if (treeState !== TreeState.EXPLODING) {
+            if (isNewGesture && treeState !== TreeState.EXPLODING) {
                 setTreeState(TreeState.EXPLODING);
             }
         }
-        // PINCH -> PHOTO VIEW
+        // PINCH -> PHOTO VIEW & GRAB NEXT
         else if (gesture === "PINCH") {
-            // Can only grab photo if scattered (or allow from tree shape too, but scattered is easier to see)
-            if (treeState === TreeState.EXPLODING || treeState === TreeState.TREE_SHAPE) {
-                setTreeState(TreeState.PHOTO_VIEW);
+            if (isNewGesture) {
+                if (treeState !== TreeState.PHOTO_VIEW) {
+                    // First Pinch: Enter mode
+                    setTreeState(TreeState.PHOTO_VIEW);
+                } else {
+                    // Subsequent Pinches: Cycle photos (Grab another one)
+                    onGrabPhoto();
+                }
             }
         }
     };
@@ -146,7 +151,7 @@ export const HandController: React.FC<HandControllerProps> = ({ setTreeState, tr
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
       if (handLandmarker) handLandmarker.close();
     };
-  }, [setTreeState, treeState, onCameraRotate]);
+  }, [setTreeState, treeState, onCameraRotate, onGrabPhoto]);
 
   return null;
 };

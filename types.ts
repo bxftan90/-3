@@ -26,6 +26,7 @@ export interface ParticleData {
   texture?: THREE.Texture;
   aspectRatio?: number;
   id?: string; // unique ID for selection
+  active?: boolean; // Track if this pre-allocated slot is in use
 }
 
 export interface TreeConfig {

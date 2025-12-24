@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useState } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { ParticleData, TreeState } from '../types';
@@ -13,22 +13,21 @@ interface TreeSystemProps {
   treeState: TreeState;
   setTreeState: (s: TreeState) => void;
   userPhotos: THREE.Texture[];
+  activePhotoIndex: number;
 }
 
-export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState, userPhotos }) => {
+export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState, userPhotos, activePhotoIndex }) => {
   const groupRef = useRef<THREE.Group>(null);
   const particles = useRef<ParticleData[]>([]);
-  // We need to track which photo is "active" for the zoom effect
-  const [activePhotoIndex, setActivePhotoIndex] = useState<number>(0);
   
   const { camera } = useThree();
 
   // ---------------------------------------------
-  // 1. Data Generation (Run once or when photos change)
+  // 1. Data Generation (Run ONCE at startup)
   // ---------------------------------------------
   useMemo(() => {
     const p: ParticleData[] = [];
-    const { height, radius, leafCount, ballCount, giftCount, lightCount } = TREE_CONFIG;
+    const { height, radius, leafCount, ballCount, giftCount, lightCount, MAX_PHOTOS } = TREE_CONFIG;
 
     const MAX_Y = height * 0.55; 
 
@@ -49,7 +48,8 @@ export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState,
         color,
         phaseOffset: Math.random() * 10,
         texture,
-        id: Math.random().toString(36).substr(2, 9)
+        id: Math.random().toString(36).substr(2, 9),
+        active: true // Default active
       });
     };
 
@@ -79,33 +79,84 @@ export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState,
       addParticle('light', pos, 0.1, 0.05, COLORS.WARM_WHITE);
     }
 
-    // E. Canes REMOVED per user request
-
-    // F. Photos (Spiral Arrangement)
-    const photoCount = userPhotos.length;
-    if (photoCount > 0) {
-        userPhotos.forEach((tex, i) => {
-            const t = i / Math.max(photoCount - 1, 1);
-            const startY = height * 0.4;
-            const endY = -height * 0.3;
-            const y = startY - t * (startY - endY);
-            const treeRadiusAtY = radius * (1 - (y + height * 0.4) / height);
-            const spiralRadius = treeRadiusAtY + 1.5; 
-            const rotations = 3;
-            const angle = t * Math.PI * 2 * rotations;
-            const x = Math.cos(angle) * spiralRadius;
-            const z = Math.sin(angle) * spiralRadius;
-            const pos = new THREE.Vector3(x, y, z);
-            
-            // Force face outward
-            const rot = new THREE.Euler(0, -angle, 0);
-            
-            addParticle('photo', pos, 1.0, 1.5, COLORS.GOLD_METALLIC, tex, rot);
+    // F. Photos (Pre-allocate MAX_PHOTOS slots)
+    // We initialize them with a default position, they will be updated by useEffect
+    for (let i = 0; i < MAX_PHOTOS; i++) {
+        // Default position far below
+        const pos = new THREE.Vector3(0, -100, 0); 
+        const rot = new THREE.Euler(0, 0, 0);
+        
+        p.push({
+            targetPos: pos,
+            currentPos: pos.clone(),
+            velocity: new THREE.Vector3(0, 0, 0),
+            angularVelocity: new THREE.Vector3(0, 0, 0),
+            currentRotation: rot,
+            scale: 0, // Start invisible
+            type: 'photo',
+            mass: 1.5,
+            color: COLORS.GOLD_METALLIC,
+            phaseOffset: Math.random() * 10,
+            texture: undefined,
+            id: `photo-${i}`,
+            active: false
         });
     }
 
     particles.current = p;
-  }, [userPhotos]); 
+  }, []); // Run once!
+
+  // ---------------------------------------------
+  // 1.5 Update Photos when user uploads
+  // ---------------------------------------------
+  useEffect(() => {
+    const { height, radius } = TREE_CONFIG;
+    let photoIndex = 0;
+
+    particles.current.forEach(p => {
+        if (p.type === 'photo') {
+            if (photoIndex < userPhotos.length) {
+                // Activate this slot
+                p.active = true;
+                p.texture = userPhotos[photoIndex];
+                p.scale = 1.0; 
+
+                // Calculate Spiral Position
+                const t = photoIndex / Math.max(userPhotos.length - 1, 1);
+                const startY = height * 0.4;
+                const endY = -height * 0.3;
+                const y = startY - t * (startY - endY);
+                const treeRadiusAtY = radius * (1 - (y + height * 0.4) / height);
+                const spiralRadius = treeRadiusAtY + 1.5; 
+                const rotations = 3;
+                const angle = t * Math.PI * 2 * rotations;
+                const x = Math.cos(angle) * spiralRadius;
+                const z = Math.sin(angle) * spiralRadius;
+                
+                // Update Target
+                p.targetPos.set(x, y, z);
+                
+                // If it was previously inactive/far away, we might want to snap it closer or let it fly in.
+                // Letting it fly in from -100 might be too much, let's snap currentPos if it was inactive
+                if (p.currentPos.y < -50) {
+                     p.currentPos.copy(p.targetPos);
+                }
+
+                // Force face outward
+                p.currentRotation.set(0, -angle, 0);
+                
+                photoIndex++;
+            } else {
+                // Deactivate this slot
+                p.active = false;
+                p.texture = undefined;
+                p.scale = 0; 
+                p.targetPos.set(0, -100, 0);
+            }
+        }
+    });
+
+  }, [userPhotos]);
 
   // ---------------------------------------------
   // 2. Physics Simulation Loop
@@ -151,26 +202,30 @@ export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState,
           p.angularVelocity.set(0,0,0);
         } else {
            p.currentPos.copy(p.targetPos);
-           // Removed cane specific rotation correction
         }
 
       // -- STATE 3: PHOTO VIEW --
       } else if (treeState === TreeState.PHOTO_VIEW) {
          if (p.type === 'photo') {
-             // Logic: Bring the first photo (or active one) to center of screen
-             if (currentPhotoIdx === activePhotoIndex) {
-                 // Calculate position in front of camera
-                 const camDir = new THREE.Vector3();
-                 camera.getWorldDirection(camDir);
-                 const target = camera.position.clone().add(camDir.multiplyScalar(12)); // 12 units in front
-                 
-                 p.currentPos.lerp(target, 0.05);
-                 p.velocity.set(0,0,0);
+             if (p.active) {
+                 // Logic: Bring the ACTIVE photo to center of screen
+                 if (currentPhotoIdx === activePhotoIndex) {
+                     // Calculate position in front of camera
+                     const camDir = new THREE.Vector3();
+                     camera.getWorldDirection(camDir);
+                     const target = camera.position.clone().add(camDir.multiplyScalar(12)); // 12 units in front
+                     
+                     p.currentPos.lerp(target, 0.05);
+                     p.velocity.set(0,0,0);
+                 } else {
+                     // Push others away slightly or keep drifting
+                     p.currentPos.y += Math.sin(time + p.phaseOffset) * 0.02;
+                 }
+                 currentPhotoIdx++;
              } else {
-                 // Push others away slightly or keep drifting
-                 p.currentPos.y += Math.sin(time + p.phaseOffset) * 0.02;
+                 // Inactive photos stay hidden/drifting
+                 p.scale = 0; 
              }
-             currentPhotoIdx++;
          } else {
              // All other particles drift or scatter slightly
              if (p.currentPos.length() < 8) {

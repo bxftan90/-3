@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { PerspectiveCamera, OrbitControls, Environment, ContactShadows } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette, Noise } from '@react-three/postprocessing';
 import { TreeSystem } from './TreeSystem';
@@ -18,12 +18,20 @@ interface ExperienceProps {
 
 export const Experience: React.FC<ExperienceProps> = ({ treeState, setTreeState, userPhotos }) => {
   const controlsRef = useRef<OrbitControlsImpl>(null);
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
 
   const handleCameraRotate = (deltaX: number) => {
     if (controlsRef.current) {
         controlsRef.current.setAzimuthalAngle(controlsRef.current.getAzimuthalAngle() + deltaX);
     }
   };
+
+  // Logic to cycle through photos when "Grabbing"
+  const handleGrabPhoto = useCallback(() => {
+    if (userPhotos.length > 0) {
+        setActivePhotoIndex((prev) => (prev + 1) % userPhotos.length);
+    }
+  }, [userPhotos.length]);
 
   return (
     <>
@@ -43,7 +51,8 @@ export const Experience: React.FC<ExperienceProps> = ({ treeState, setTreeState,
       <HandController 
          treeState={treeState} 
          setTreeState={setTreeState} 
-         onCameraRotate={handleCameraRotate} 
+         onCameraRotate={handleCameraRotate}
+         onGrabPhoto={handleGrabPhoto}
       />
 
       {/* --- Lighting (Brightened for Luxury Feel) --- */}
@@ -68,7 +77,12 @@ export const Experience: React.FC<ExperienceProps> = ({ treeState, setTreeState,
       <fog attach="fog" args={[COLORS.BACKGROUND, 10, 50]} />
 
       {/* --- Content --- */}
-      <TreeSystem treeState={treeState} setTreeState={setTreeState} userPhotos={userPhotos} />
+      <TreeSystem 
+        treeState={treeState} 
+        setTreeState={setTreeState} 
+        userPhotos={userPhotos} 
+        activePhotoIndex={activePhotoIndex}
+      />
       <SnowBackground />
       
       <ContactShadows opacity={0.7} scale={40} blur={2} far={10} resolution={256} color="#000000" />

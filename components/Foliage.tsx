@@ -95,6 +95,7 @@ export const Foliage: React.FC<FoliageProps> = ({ particles, treeState }) => {
     }
     if (geomRef.current) {
       geomRef.current.attributes.position.needsUpdate = true;
+      geomRef.current.attributes.scale.needsUpdate = true;
     }
   }, [count, particles, positions, scales, phases]);
 
@@ -104,16 +105,19 @@ export const Foliage: React.FC<FoliageProps> = ({ particles, treeState }) => {
     // Update Uniforms
     shaderRef.current.uniforms.uTime.value = state.clock.elapsedTime;
 
-    // Update Positions from physics simulation (happening in parent or hook)
-    // We strictly read from the particle ref to update the buffer
+    // Update Positions and Scales from physics simulation
     const pData = particles.current;
     const posAttr = geomRef.current.attributes.position;
+    const scaleAttr = geomRef.current.attributes.scale;
     
     for (let i = 0; i < count; i++) {
       const p = pData[i];
       posAttr.setXYZ(i, p.currentPos.x, p.currentPos.y, p.currentPos.z);
+      // We update scale here to support dynamic hiding (scale=0) of inactive particles
+      scaleAttr.setX(i, p.scale);
     }
     posAttr.needsUpdate = true;
+    scaleAttr.needsUpdate = true;
   });
 
   return (
