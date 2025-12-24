@@ -28,6 +28,6 @@ export const TREE_CONFIG = {
   ballCount: 120,
   giftCount: 25,
   lightCount: 200, 
-  caneCount: 0, // Removed candy canes
+  caneCount: 40, // Added 40 Candy Canes
   MAX_PHOTOS: 100 // Pre-allocate buffer for up to 100 photos
 };

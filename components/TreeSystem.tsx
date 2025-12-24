@@ -27,7 +27,7 @@ export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState,
   // ---------------------------------------------
   useMemo(() => {
     const p: ParticleData[] = [];
-    const { height, radius, leafCount, ballCount, giftCount, lightCount, MAX_PHOTOS } = TREE_CONFIG;
+    const { height, radius, leafCount, ballCount, giftCount, lightCount, caneCount, MAX_PHOTOS } = TREE_CONFIG;
 
     const MAX_Y = height * 0.55; 
 
@@ -77,6 +77,15 @@ export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState,
     for (let i = 0; i < lightCount; i++) {
       const pos = getPointOnConeSurface(height, radius * 0.95); 
       addParticle('light', pos, 0.1, 0.05, COLORS.WARM_WHITE);
+    }
+    
+    // E. Candy Canes (NEW)
+    for (let i = 0; i < caneCount; i++) {
+      const pos = getUniformSurfacePointInCone(height, radius * 0.92);
+      // Hook rotation logic: Face somewhat outward
+      const angle = Math.atan2(pos.x, pos.z);
+      const rot = new THREE.Euler(0, angle + Math.PI/2, Math.random() * 0.5 - 0.25);
+      addParticle('cane', pos, 0.4, 1.0, COLORS.WARM_WHITE, undefined, rot);
     }
 
     // F. Photos (Pre-allocate MAX_PHOTOS slots)
@@ -136,8 +145,7 @@ export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState,
                 // Update Target
                 p.targetPos.set(x, y, z);
                 
-                // If it was previously inactive/far away, we might want to snap it closer or let it fly in.
-                // Letting it fly in from -100 might be too much, let's snap currentPos if it was inactive
+                // Snap if previously inactive to avoid shooting up from abyss
                 if (p.currentPos.y < -50) {
                      p.currentPos.copy(p.targetPos);
                 }
@@ -208,31 +216,29 @@ export const TreeSystem: React.FC<TreeSystemProps> = ({ treeState, setTreeState,
       } else if (treeState === TreeState.PHOTO_VIEW) {
          if (p.type === 'photo') {
              if (p.active) {
-                 // Logic: Bring the ACTIVE photo to center of screen
                  if (currentPhotoIdx === activePhotoIndex) {
-                     // Calculate position in front of camera
+                     // ACTIVE PHOTO: Bring to center
                      const camDir = new THREE.Vector3();
                      camera.getWorldDirection(camDir);
-                     const target = camera.position.clone().add(camDir.multiplyScalar(12)); // 12 units in front
+                     const target = camera.position.clone().add(camDir.multiplyScalar(12)); 
                      
                      p.currentPos.lerp(target, 0.05);
                      p.velocity.set(0,0,0);
                  } else {
-                     // Push others away slightly or keep drifting
+                     // OTHER PHOTOS: Drift
                      p.currentPos.y += Math.sin(time + p.phaseOffset) * 0.02;
                  }
                  currentPhotoIdx++;
              } else {
-                 // Inactive photos stay hidden/drifting
                  p.scale = 0; 
              }
          } else {
-             // All other particles drift or scatter slightly
-             if (p.currentPos.length() < 8) {
-                 // Gently push out if too close to center to clear view for photo
-                 p.currentPos.addScaledVector(p.currentPos.clone().normalize(), 0.05);
+             // NON-PHOTO ELEMENTS: Push away / Dim
+             // We can push them out from center to clear view
+             if (p.currentPos.length() < 10) {
+                 const pushDir = p.currentPos.clone().normalize();
+                 p.currentPos.addScaledVector(pushDir, 0.1);
              }
-             p.currentPos.y += Math.sin(time + p.phaseOffset) * 0.02;
          }
       }
     });
